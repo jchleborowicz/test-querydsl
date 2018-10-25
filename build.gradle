@@ -1,17 +1,20 @@
+import org.ajoberstar.grgit.Grgit
+
 buildscript {
     ext {
-        springBootVersion = '2.0.6.RELEASE'
+        springBootVersion = '2.1.7.RELEASE'
     }
     repositories {
-        mavenCentral()
+        jcenter()
     }
     dependencies {
-        classpath("org.springframework.boot:spring-boot-gradle-plugin:${springBootVersion}")
+        classpath "org.springframework.boot:spring-boot-gradle-plugin:${springBootVersion}"
+        classpath 'org.ajoberstar.grgit:grgit-core:3.1.1'
     }
 }
 
 plugins {
-    id 'net.ltgt.apt' version '0.15'
+    id 'org.liquibase.gradle' version '2.0.1'
 }
 
 apply plugin: 'java'
@@ -20,20 +23,102 @@ apply plugin: 'org.springframework.boot'
 apply plugin: 'io.spring.dependency-management'
 
 group = 'pl.jdata.example.querydsl'
-version = '0.0.1-SNAPSHOT'
 sourceCompatibility = 1.8
 
 repositories {
-    mavenCentral()
+    jcenter()
 }
 
+ext {
+    liquibaseVersion = '3.8.0'
+    liquibaseGroovyDslVersion = '2.0.3'
+    postgresqlVersion = '42.2.5'
+    queryDslVersion = '4.2.1'
+}
+
+final String generatedSourcesDir = "src/main/generated"
+
+sourceSets {
+    main {
+        java {
+            srcDir 'src/main/java'
+            srcDir generatedSourcesDir
+        }
+    }
+}
+dependencyManagement {
+    dependencies {
+        dependency "org.liquibase:liquibase-core:${liquibaseVersion}"
+        dependency "org.liquibase:liquibase-groovy-dsl:${liquibaseGroovyDslVersion}"
+        dependency "org.postgresql:postgresql:${postgresqlVersion}"
+        dependency "com.querydsl:querydsl-sql:${queryDslVersion}"
+        dependency "com.querydsl:querydsl-sql-codegen:${queryDslVersion}"
+    }
+}
+
+configurations {
+    queryDslCodegen
+}
 
 dependencies {
+    liquibaseRuntime 'org.liquibase:liquibase-core'
+    liquibaseRuntime 'org.liquibase:liquibase-groovy-dsl'
+    liquibaseRuntime 'org.postgresql:postgresql'
+
+    queryDslCodegen 'org.postgresql:postgresql'
+    queryDslCodegen 'com.querydsl:querydsl-sql-codegen'
+
     implementation 'org.springframework.boot:spring-boot-starter'
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+
+    implementation 'org.liquibase:liquibase-core'
+    implementation 'com.querydsl:querydsl-sql'
+    runtime 'org.postgresql:postgresql'
 
     compileOnly 'org.projectlombok:lombok'
 
     annotationProcessor 'org.projectlombok:lombok'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+final String jdbcUrl = 'jdbc:postgresql://localhost:5432/querydsl_sample'
+final String jdbcUsername = 'postgres'
+final String jdbcPassword = 'postgres'
+
+liquibase {
+    activities {
+        main {
+            changeLogFile 'src/main/resources/db-changelog/db.changelog-master.xml'
+            url jdbcUrl
+            username jdbcUsername
+            password jdbcPassword
+        }
+    }
+}
+
+task('codegen') {
+    doLast {
+
+        ant.taskdef(name: 'codegen',
+                classname: 'com.querydsl.sql.codegen.ant.AntMetaDataExporter',
+                classpath: configurations.queryDslCodegen.asPath
+        )
+
+        ant.delete(dir: generatedSourcesDir)
+
+        mkdir generatedSourcesDir
+
+        ant.codegen(
+                jdbcDriver: "org.postgresql.Driver",
+                jdbcUser: jdbcUsername,
+                jdbcPassword: jdbcPassword,
+                jdbcUrl: jdbcUrl,
+                packageName: "pl.jdata.example.querydsl.querydsl_demo.generated",
+                targetFolder: generatedSourcesDir
+        )
+
+        def grgit = Grgit.open()
+        grgit.add(patterns: [generatedSourcesDir])
+    }
 }
